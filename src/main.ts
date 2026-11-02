@@ -229,23 +229,41 @@ function songSource(): SongSource {
   };
 }
 
+/** Game-style counter: zero-padded, with the leading zeros dimmed. */
+function counter(value: number, width: number): string {
+  const digits = String(Math.max(0, Math.round(value)));
+  const lead = Math.max(0, width - digits.length);
+  return `<span class="lead">${"0".repeat(lead)}</span>${digits}`;
+}
+
+/** Hours and minutes as a counter: 019h29m. */
+function timeCounter(sec: number): string {
+  const totalMin = Math.round(sec / 60);
+  const h = Math.floor(totalMin / 60);
+  const m = String(totalMin % 60).padStart(2, "0");
+  return `${counter(h, 3)}<span class="unit">h</span>${m}<span class="unit">m</span>`;
+}
+
+const plural = (n: number, one: string, many = one + "s") => `${fmt(n)} ${n === 1 ? one : many}`;
+
 function render() {
   const manual = radio("songMode") === "manual";
   $("poolBox").hidden = manual;
   $("manualBox").hidden = !manual;
   $("scoresBox").hidden = !fromScores();
   $("baseEpBox").hidden = fromScores();
-  $("scoresOut").textContent = `→ base EP ≈ ${baseEp().toFixed(1)} per play (multi-live fit, ±0.1%)`;
+  $("scoresOut").textContent = `Base EP ${baseEp().toFixed(1)} per play, from a fit to real multi-live results.`;
 
   const endDate = $("endDate").value;
   const [y, m, d] = endDate.split("-").map(Number);
-  $("endLocal").textContent = y
-    ? `Ends ${new Date(Date.UTC(y, m - 1, d, EVENT_END_HOUR_UTC)).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })} your time`
+  const endText = y
+    ? new Date(Date.UTC(y, m - 1, d, EVENT_END_HOUR_UTC)).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
     : "";
+  $("endLocal").textContent = endText ? `That's ${endText} your time.` : "";
 
   const warnings: string[] = [];
   const src = songSource();
-  if (src.kind === "pool" && src.pool.length === 0) warnings.push("Pick the event members, or switch songs to manual.");
+  if (src.kind === "pool" && src.pool.length === 0) warnings.push("Pick the event members under Songs, or enter songs by hand.");
 
   const opts = pointOpts();
   const mins = minutesLeft(endDate);
@@ -267,11 +285,16 @@ function render() {
   const secPerPlay = songSec + num("overheadSec");
   const valid = levels.every((l) => l.points > 0) && secPerPlay > 0;
 
-  const out = $("summary");
-  const table = $<HTMLTableElement>("levels");
+  $("goalLine").innerHTML = endText
+    ? `<strong>${fmt(needed)}</strong> more points by <strong>${endText}</strong>`
+    : "Set the event's end date.";
+
   if (!valid) {
-    if (opts.baseEp <= 0) warnings.push("Set your typical scores or a base EP per play.");
+    if (opts.baseEp <= 0) warnings.push("Enter your typical scores or a base EP per play under Team.");
     $("warnings").innerHTML = warnings.map((w) => `<div class="warn">${w}</div>`).join("");
+    $("counters").innerHTML = "";
+    $("planLine").textContent = "";
+    $("summary").innerHTML = "";
     $("results").hidden = true;
     return;
   }
@@ -287,68 +310,84 @@ function render() {
     gems: num("gems"),
   };
   const strategy = radio("strategy") as Strategy;
-  const balancedSec = (num("hoursPerDay") * 3600 * mins) / 1440;
+  const hoursPerDay = num("hoursPerDay");
+  const balancedSec = (hoursPerDay * 3600 * mins) / 1440;
   const plan = planFor(strategy, input, balancedSec);
+  const daysLeft = mins / 1440;
 
   if (stamina >= staminaCap(holopass)) {
-    warnings.push(`Stamina is at or above the cap (${staminaCap(holopass)}), so natural regen is paused until you spend it.`);
+    warnings.push(`Your stamina is at the cap (${staminaCap(holopass)}), so it isn't refilling until you spend some.`);
   }
   if (plan.mix.some((m) => m.k >= 7)) {
-    warnings.push("At 7+ boosts per play, natural regen is functionally 0. Your regen efficiency setting is optimistic.");
+    warnings.push("At 7 or more boosts a play, natural stamina barely matters, so the natural stamina below is optimistic.");
   }
   if (plan.mix.some((m) => m.k === 0)) {
-    warnings.push(
-      "Plan includes 0-boost plays. These only happen with empty stamina; you can't pick 0 boosts while holding any.",
-    );
+    warnings.push("This plan uses free plays. Those only happen with empty stamina; you can't choose 0 boosts while you have any.");
   }
   if (!plan.feasible) {
     warnings.push(
       strategy === "balanced"
-        ? "Can't reach the target in your daily play hours, even at 10 boosts. Showing all-10s."
-        : "Can't reach the target before the event ends, even at 10 boosts.",
+        ? "Your daily hours aren't enough even at 10 boosts a play. Showing 10 boosts for every play."
+        : "The target can't be reached before the event ends, even at 10 boosts a play.",
     );
   }
-  if (plan.gemsShort > 0) warnings.push(`You're ${fmt(plan.gemsShort)} gems short.`);
   $("warnings").innerHTML = warnings.map((w) => `<div class="warn">${w}</div>`).join("");
 
-  $("planTitle").textContent = `Plan: ${strategy}`;
-  const mix = plan.mix.map((m) => `${fmt(m.plays)} × ${m.k} boost${m.k === 1 ? "" : "s"}`).join(" + ") || "nothing to do";
-  const rows: [string, string, boolean?][] = [
-    ["Event time left", `${fmtDuration(mins * 60)} (${fmt(mins)} min)`],
-    ["Points still needed", fmt(needed)],
-    ["Plays", mix, true],
-    ["Natural stamina", `${fmt(nat.total)} (${fmt(stamina)} now + ${fmt(nat.regen)} regen)`],
-    ["Boosts used", fmt(plan.boosts)],
-    ["Extra boosts needed", fmt(plan.extraBoosts)],
-    ["Left over stamina", fmt(plan.leftoverBoosts)],
-    ["Drinks spent", fmt(plan.drinksSpent)],
-    ["Gems spent", fmt(plan.gemsSpent), true],
-    ["Time needed", `${fmtDuration(plan.playSec)} (${(secPerPlay).toFixed(0)}s per play)`, true],
-    ["Final event points", fmt(num("currentPts") + plan.points)],
-  ];
-  out.innerHTML = rows.map(([k, v, big]) => `<dt>${k}</dt><dd${big ? ' class="big"' : ""}>${v}</dd>`).join("");
+  // the answer
+  const drinksOwned = num("drinks");
+  const gemsOwned = num("gems");
+  const perDay = daysLeft > 0 ? plan.playSec / 3600 / daysLeft : 0;
+  const gemsNote =
+    plan.gemsShort > 0
+      ? `<span class="c-note short">${fmt(plan.gemsShort)} more than you have</span>`
+      : `<span class="c-note">You have ${fmt(gemsOwned)}</span>`;
+  $("counters").innerHTML = `
+    <div class="counter gems"><span class="c-label">Gems</span><span class="c-num">${counter(plan.gemsSpent, 7)}</span>${gemsNote}</div>
+    <div class="counter drinks"><span class="c-label">Drinks</span><span class="c-num">${counter(plan.drinksSpent, 5)}</span>
+      <span class="c-note">${drinksOwned > 0 ? `Of the ${fmt(drinksOwned)} you have` : "Enter drinks you own under Stamina"}</span></div>
+    <div class="counter time"><span class="c-label">Play time</span><span class="c-num">${timeCounter(plan.playSec)}</span>
+      <span class="c-note">About ${perDay.toFixed(1)} hours a day until the end</span></div>`;
 
+  const mix = plan.mix.map((m) => `${plural(m.plays, "play")} at ${plural(m.k, "boost")}`);
+  $("planLine").textContent = mix.length ? `${mix.join(" and ")}.` : "You've already reached the target.";
+
+  const facts: [string, string][] = [
+    ["Natural stamina", `${fmt(nat.total)}`],
+    ["Boosts used", fmt(plan.boosts)],
+    ["Stamina left over", fmt(plan.leftoverBoosts)],
+    ["Time per play", `${Math.round(secPerPlay)}s`],
+    ["Final points", fmt(num("currentPts") + plan.points)],
+  ];
+  $("summary").innerHTML = facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+
+  // every boost level
   const used = new Set(plan.mix.map((m) => m.k));
-  const head =
-    "<tr><th>boosts</th><th>× table</th><th>length %</th><th>pts / play</th><th>pts / boost</th><th>plays</th><th>time</th>" +
-    '<th title="Hours per day you\'d have to play, spread over the time left">per day</th>' +
-    '<th title="Drinks spent after natural stamina (drinks are used before gems)">drinks</th><th title="Gems spent once drinks run out">gems</th></tr>';
-  const daysLeft = mins / 1440;
+  const scaleHours = Math.max(hoursPerDay * 2, 1); // the tick sits halfway along the bar
+  // same order as the answer panel: gems, drinks, time first; the detail after
+  const head = `<thead><tr><th class="boosts">Boosts</th><th class="gems">Gems</th><th class="drinks">Drinks</th>
+    <th class="time">Play time</th><th class="time" title="Hours a day you'd play, spread over the time left">Hours a day</th>
+    <th>Plays</th><th>Points a play</th><th>Points a boost</th><th>Highlight</th></tr></thead>`;
   const body = levels
     .map((l) => {
       const p = singleLevel(l.k, input);
-      const perDay = daysLeft > 0 ? p.playSec / 3600 / daysLeft : Infinity;
-      // ok: fits your daily hours · over: needs more than your daily hours · no: can't finish before the event ends
-      const cls = p.playSec <= balancedSec ? "ok" : p.feasible ? "over" : "no";
-      const perDayText = cls === "no" ? "too slow" : `${perDay.toFixed(1)}h`;
+      const pd = daysLeft > 0 ? p.playSec / 3600 / daysLeft : Infinity;
+      const state = p.playSec <= balancedSec ? "fit" : p.feasible ? "over" : "no";
+      const fill = Math.min(100, (pd / scaleHours) * 100);
+      const tick = Math.min(100, (hoursPerDay / scaleHours) * 100);
+      const bar =
+        state === "no"
+          ? `<div class="bar no"><span class="val">too slow</span></div>`
+          : `<div class="bar ${state}"><span class="track"><span class="fill" style="width:${fill.toFixed(1)}%"></span>` +
+            `<span class="tick" style="left:calc(${tick.toFixed(1)}% - 1px)"></span></span><span class="val">${pd.toFixed(1)}h</span></div>`;
       return `<tr class="${used.has(l.k) ? "inplan" : ""}">
-        <td>${l.k}</td><td>${BOOST_MULT[l.k]}</td><td>${(lengthPctAt.get(l.k) ?? 0).toFixed(1)}</td>
-        <td>${fmt(l.points)}</td><td>${l.k === 0 ? "free" : (l.points / l.k).toFixed(1)}</td>
-        <td>${fmt(p.plays)}</td><td>${fmtDuration(p.playSec)}</td><td class="${cls}">${perDayText}</td>
-        <td>${fmt(p.drinksSpent)}</td><td>${fmt(p.gemsSpent)}</td></tr>`;
+        <td class="boosts">${l.k}<span class="x">×${BOOST_MULT[l.k]}</span></td>
+        <td class="gems">${fmt(p.gemsSpent)}</td><td class="drinks">${fmt(p.drinksSpent)}</td>
+        <td class="time">${fmtDuration(p.playSec)}</td><td class="perday">${bar}</td>
+        <td>${fmt(p.plays)}</td><td>${fmt(l.points)}</td><td>${l.k === 0 ? '<span class="free">free</span>' : fmt(l.points / l.k)}</td>
+        <td>${Math.round(lengthPctAt.get(l.k) ?? 0)}%</td></tr>`;
     })
     .join("");
-  table.innerHTML = head + body;
+  $<HTMLTableElement>("levels").innerHTML = head + `<tbody>${body}</tbody>`;
 }
 
 // ------------------------------------------------------------ wiring
