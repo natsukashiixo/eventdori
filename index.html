@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>eventdori</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>eventdori</h1>
+      <p class="sub">event point calculator · everything runs and is saved in your browser</p>
+    </header>
+
+    <main>
+      <form id="f" autocomplete="off">
+        <fieldset>
+          <legend>Event</legend>
+          <label>End date <small>(ends 11:00 UTC)</small><input type="date" id="endDate" /></label>
+          <p class="hint" id="endLocal"></p>
+          <label>Current points<input type="number" id="currentPts" min="0" value="0" /></label>
+          <label>Target points<input type="number" id="targetPts" min="0" value="500000" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Team</legend>
+          <label>Base EP per play<input type="number" id="baseEp" min="0" step="any" value="100" /></label>
+          <label>Member event bonus %<input type="number" id="memberBonus" step="any" value="0" /></label>
+          <label class="check"><input type="checkbox" id="holopass" /> holopass (×2 points, cap 20)</label>
+          <details>
+            <summary>Calibrate base EP from your plays</summary>
+            <p class="hint">Play 4–5 songs at the same boost count and paste the points, one per line.
+              Optionally add the length bonus % shown after a space (<code>6720 30</code>); otherwise the
+              expected bonus for your song pool is used. Uses the bonus % and holopass set above.</p>
+            <label>Boosts used<input type="number" id="obsK" min="0" max="10" value="10" /></label>
+            <label>Points per play<textarea id="obsPlays" rows="5" placeholder="6720&#10;7015 30&#10;6890"></textarea></label>
+            <button type="button" id="calibrate">Set base EP</button>
+            <p class="hint" id="calibOut"></p>
+          </details>
+        </fieldset>
+
+        <fieldset>
+          <legend>Stamina &amp; wallet</legend>
+          <label>Current stamina<input type="number" id="currentStamina" min="0" max="99" value="0" /></label>
+          <label>Regen efficiency <small>(0–1, share of regen you actually catch)</small>
+            <input type="number" id="efficiency" min="0" max="1" step="0.05" value="0.7" /></label>
+          <label>Drinks owned<input type="number" id="drinks" min="0" value="0" /></label>
+          <label>Gems owned<input type="number" id="gems" min="0" value="0" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Play time</legend>
+          <label>Overhead per play, sec <small>(loading, results)</small><input type="number" id="overheadSec" min="0" value="40" /></label>
+          <label>Minimum boosts per play <small>(0 = allow free plays when out of stamina)</small>
+            <input type="number" id="minBoost" min="0" max="10" value="1" /></label>
+          <label>Hours you can play per day <small>(balanced)</small><input type="number" id="hoursPerDay" min="0" max="24" step="0.5" value="4" /></label>
+          <div class="radios" role="radiogroup">
+            <label><input type="radio" name="strategy" value="fastest" /> fastest</label>
+            <label><input type="radio" name="strategy" value="balanced" checked /> balanced</label>
+            <label><input type="radio" name="strategy" value="cheapest" /> cheapest</label>
+          </div>
+        </fieldset>
+
+        <fieldset class="songs">
+          <legend>Songs</legend>
+          <div class="radios">
+            <label><input type="radio" name="songMode" value="pool" checked /> event members</label>
+            <label><input type="radio" name="songMode" value="manual" /> manual</label>
+          </div>
+          <div id="poolBox">
+            <label>Event members <small>(1–5)</small></label>
+            <div class="members">
+              <select id="member1" class="member" aria-label="member 1"></select>
+              <select id="member2" class="member" aria-label="member 2"></select>
+              <select id="member3" class="member" aria-label="member 3"></select>
+              <select id="member4" class="member" aria-label="member 4"></select>
+              <select id="member5" class="member" aria-label="member 5"></select>
+            </div>
+            <label>Main song <small>(sung by all chosen members)</small><select id="mainSong"></select></label>
+            <label class="check"><input type="checkbox" id="includeEveryone" /> count "everyone" songs (hololive IDOL PROJECT) in the pool</label>
+            <p class="hint" id="poolCount"></p>
+            <div id="poolList" class="pool"></div>
+          </div>
+          <div id="manualBox" hidden>
+            <label>Base length bonus % <small>(before boost factor)</small><input type="number" id="manualLengthPct" step="any" value="30" /></label>
+            <label>Average song length, sec<input type="number" id="manualAvgLen" min="1" value="127" /></label>
+          </div>
+          <p class="hint dbline"><span id="dbStatus"></span> <button type="button" id="dbRefresh" class="link">refresh</button></p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Formula assumptions</legend>
+          <label>Rounding<select id="rounding">
+            <option value="exact">no rounding</option>
+            <option value="floor-each">floor after each multiplier</option>
+          </select></label>
+          <label>Main song chance<input type="number" id="eventChance" min="0" max="1" step="0.05" value="0.5" /></label>
+        </fieldset>
+      </form>
+
+      <section id="out" aria-live="polite">
+        <div id="warnings"></div>
+        <div id="results">
+        <h2 id="planTitle">Plan</h2>
+        <dl id="summary"></dl>
+        <h2>Every boost level</h2>
+        <div class="tablewrap"><table id="levels"></table></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
