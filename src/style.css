@@ -8,6 +8,7 @@
   --good: #1f8a4c;
   --bad: #c62828;
   --badbg: #fdecec;
+  --warn: #b26a00;
   --pick: #eaf1fc;
   color-scheme: light;
 }
@@ -22,6 +23,7 @@
     --good: #5cc98a;
     --bad: #ff7b7b;
     --badbg: #3a1d1d;
+    --warn: #f0b04a;
     --pick: #1f2a3b;
     color-scheme: dark;
   }
@@ -144,4 +146,6 @@ th { color: var(--muted); font-weight: 500; }
 tr:last-child td { border-bottom: 0; }
 td.no { color: var(--bad); }
 td.ok { color: var(--good); }
+td.over { color: var(--warn); }
 tr.inplan td { background: var(--pick); }
+.tablewrap + .hint { margin-top: 8px; }

@@ -329,16 +329,23 @@ function render() {
   out.innerHTML = rows.map(([k, v, big]) => `<dt>${k}</dt><dd${big ? ' class="big"' : ""}>${v}</dd>`).join("");
 
   const used = new Set(plan.mix.map((m) => m.k));
-  const head = "<tr><th>boosts</th><th>× table</th><th>length %</th><th>pts / play</th><th>pts / boost</th><th>plays</th><th>time</th><th>gems</th><th>fits?</th></tr>";
+  const head =
+    "<tr><th>boosts</th><th>× table</th><th>length %</th><th>pts / play</th><th>pts / boost</th><th>plays</th><th>time</th>" +
+    '<th title="Hours per day you\'d have to play, spread over the time left">per day</th>' +
+    '<th title="Drinks spent after natural stamina (drinks are used before gems)">drinks</th><th title="Gems spent once drinks run out">gems</th></tr>';
+  const daysLeft = mins / 1440;
   const body = levels
     .map((l) => {
       const p = singleLevel(l.k, input);
-      const fits = p.playSec <= balancedSec ? "daily" : p.feasible ? "event" : "no";
+      const perDay = daysLeft > 0 ? p.playSec / 3600 / daysLeft : Infinity;
+      // ok: fits your daily hours · over: needs more than your daily hours · no: can't finish before the event ends
+      const cls = p.playSec <= balancedSec ? "ok" : p.feasible ? "over" : "no";
+      const perDayText = cls === "no" ? "too slow" : `${perDay.toFixed(1)}h`;
       return `<tr class="${used.has(l.k) ? "inplan" : ""}">
         <td>${l.k}</td><td>${BOOST_MULT[l.k]}</td><td>${(lengthPctAt.get(l.k) ?? 0).toFixed(1)}</td>
         <td>${fmt(l.points)}</td><td>${l.k === 0 ? "free" : (l.points / l.k).toFixed(1)}</td>
-        <td>${fmt(p.plays)}</td><td>${fmtDuration(p.playSec)}</td><td>${fmt(p.gemsSpent)}</td>
-        <td class="${fits === "no" ? "no" : "ok"}">${fits}</td></tr>`;
+        <td>${fmt(p.plays)}</td><td>${fmtDuration(p.playSec)}</td><td class="${cls}">${perDayText}</td>
+        <td>${fmt(p.drinksSpent)}</td><td>${fmt(p.gemsSpent)}</td></tr>`;
     })
     .join("");
   table.innerHTML = head + body;
