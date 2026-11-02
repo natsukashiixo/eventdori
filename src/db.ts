@@ -25,6 +25,7 @@ export interface DbSong {
   id: string;
   title: string;
   length: number; // seconds
+  start: number; // release time, epoch ms
   chars: string[]; // singers; empty for "everyone" songs
   everyone: boolean; // MUSIC_SINGER_TYPE_ALL: hololive IDOL PROJECT songs
 }
@@ -59,6 +60,7 @@ export function buildDb(character: Row[], music: Row[], langMusic: Row[], fetche
       id: m.id as string,
       title: text.get(m.titleLangId as string) ?? (m.id as string),
       length: Number(m.playingSeconds),
+      start: Number(m.startTime ?? 0),
       chars: (m.characterIds as string[] | undefined) ?? [],
       everyone: String(m.musicSingerType).endsWith("_ALL"),
     }))
@@ -80,18 +82,69 @@ export async function fetchDb(fetchFn: typeof fetch = fetch): Promise<Db> {
   return db;
 }
 
-// ---------------------------------------------------------------- pool selection
+// ---------------------------------------------------------------- song selection during an event
+//
+// How the game picks a song during an event (per community findings):
+//   50%: an event song, equal weight between them.
+//   50%: a random event member (equal weight), then a random non-event song of that member,
+//        which is the same list the in-game member filter shows.
+// Every song picked during an event gets the highlight length bonus.
 
-/** Main-song candidates: songs whose singers include every chosen member (all songs if none chosen). */
-export function mainSongCandidates(db: Db, chosen: string[]): { withAll: DbSong[]; everyone: DbSong[] } {
-  const withAll = db.songs.filter((s) => !s.everyone && chosen.every((c) => s.chars.includes(c)));
-  return { withAll, everyone: db.songs.filter((s) => s.everyone) };
+export type EventType = "marathon" | "spotlight";
+
+/** Songs the member sings. With `includeEveryone`, also the hololive IDOL PROJECT songs. */
+export function memberSongs(db: Db, member: string, includeEveryone: boolean): DbSong[] {
+  return db.songs.filter((s) => s.chars.includes(member) || (includeEveryone && s.everyone));
 }
 
-/** Highlight pool: songs sung by at least one chosen member, minus the main song. */
-export function highlightPool(db: Db, chosen: string[], mainId: string, includeEveryone: boolean): DbSong[] {
-  if (chosen.length === 0) return [];
-  return db.songs.filter(
-    (s) => s.id !== mainId && ((includeEveryone && s.everyone) || s.chars.some((c) => chosen.includes(c))),
-  );
+/**
+ * Guess the event songs.
+ * Marathon: the newest song sung by all members, plus every song released at the same time with
+ * at least one member (the group song + one solo each).
+ * Spotlight: the member's newest song.
+ */
+export function suggestEventSongs(db: Db, type: EventType, members: string[]): string[] {
+  if (members.length === 0) return [];
+  const newest = (list: DbSong[]) =>
+    list.reduce<DbSong | null>((a, b) => (!a || b.start > a.start || (b.start === a.start && b.chars.length < a.chars.length) ? b : a), null);
+  if (type === "spotlight") {
+    const s = newest(db.songs.filter((x) => x.chars.includes(members[0])));
+    return s ? [s.id] : [];
+  }
+  const group = newest(db.songs.filter((x) => !x.everyone && members.every((m) => x.chars.includes(m))));
+  if (!group) return [];
+  return db.songs.filter((x) => x.start === group.start && x.chars.some((c) => members.includes(c))).map((x) => x.id);
+}
+
+export interface WeightedSong {
+  song: DbSong;
+  weight: number; // chance this song is picked on a play
+  event: boolean;
+}
+
+/**
+ * Per-song pick chance. Members with no non-event songs are skipped (their share goes to the others);
+ * if nobody has any, event songs get 100%, and vice versa.
+ */
+export function songWeights(
+  db: Db,
+  members: string[],
+  eventIds: ReadonlySet<string>,
+  includeEveryone: boolean,
+  eventShare = 0.5,
+): WeightedSong[] {
+  const w = new Map<string, WeightedSong>();
+  const add = (song: DbSong, weight: number, event: boolean) => {
+    const cur = w.get(song.id);
+    if (cur) cur.weight += weight;
+    else w.set(song.id, { song, weight, event });
+  };
+  const events = db.songs.filter((s) => eventIds.has(s.id));
+  const perMember = members
+    .map((m) => memberSongs(db, m, includeEveryone).filter((s) => !eventIds.has(s.id)))
+    .filter((list) => list.length > 0);
+  const evShare = events.length === 0 ? 0 : perMember.length === 0 ? 1 : eventShare;
+  for (const s of events) add(s, evShare / events.length, true);
+  for (const list of perMember) for (const s of list) add(s, (1 - evShare) / perMember.length / list.length, false);
+  return [...w.values()].sort((a, b) => Number(b.event) - Number(a.event) || b.weight - a.weight || a.song.title.localeCompare(b.song.title));
 }

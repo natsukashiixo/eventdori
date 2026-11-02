@@ -3,7 +3,7 @@ import {
   BOOST_MULT,
   EVENT_END_HOUR_UTC,
   MAX_BOOST,
-  buildPool,
+  baseEpFromScores,
   calibrateBaseEp,
   expectedPlay,
   fmtDuration,
@@ -20,10 +20,10 @@ import {
   type SongSource,
   type Strategy,
 } from "./calc";
-import { fetchDb, highlightPool, mainSongCandidates, type Db, type DbSong } from "./db";
+import { fetchDb, songWeights, suggestEventSongs, type Db, type EventType, type WeightedSong } from "./db";
 
 const STORE_KEY = "eventdori:v1";
-const DB_KEY = "eventdori:db:v1";
+const DB_KEY = "eventdori:db:v2"; // v2: songs carry release time
 const DB_MAX_AGE = 24 * 3600 * 1000;
 const MEMBER_IDS = ["member1", "member2", "member3", "member4", "member5"];
 
@@ -69,6 +69,7 @@ async function refreshDb(force = false) {
     songById = new Map(db.songs.map((s) => [s.id, s]));
     try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch { /* storage unavailable */ }
     fillMembers();
+    for (const id of [...eventIds]) if (!songById.has(id)) eventIds.delete(id);
     rebuildSongUi();
     dbStatus();
     render();
@@ -79,7 +80,7 @@ async function refreshDb(force = false) {
 
 // ------------------------------------------------------------ member + song pickers
 
-const poolOff = new Set<string>(); // songs the user unticked from the derived pool
+const eventIds = new Set<string>(); // songs ticked as event songs
 
 function fillMembers() {
   const groups = new Map<string, Db["members"]>();
@@ -98,61 +99,70 @@ function fillMembers() {
   }
 }
 
-const chosenMembers = () => [...new Set(MEMBER_IDS.map((id) => $<HTMLSelectElement>(id).value).filter(Boolean))];
-const songLabel = (s: DbSong) => `${s.title} (${s.length}s)`;
+/** Gray out members already picked in another slot. */
+function syncMemberOptions() {
+  const sels = MEMBER_IDS.map((id) => $<HTMLSelectElement>(id));
+  for (const sel of sels) {
+    const takenElsewhere = new Set(sels.filter((o) => o !== sel && !o.hidden).map((o) => o.value).filter(Boolean));
+    for (const opt of sel.options) opt.disabled = takenElsewhere.has(opt.value);
+  }
+}
 
-/** Rebuild the main-song options and the derived pool list. Call when members, main song or data change. */
-function rebuildSongUi(wantMain?: string) {
-  const chosen = chosenMembers();
-  const main = $<HTMLSelectElement>("mainSong");
-  const keep = wantMain ?? main.value;
-  const { withAll, everyone } = mainSongCandidates(db, chosen);
-  main.replaceChildren(new Option("(none)", ""));
-  const group = (label: string, list: DbSong[]) => {
-    if (!list.length) return;
-    const og = document.createElement("optgroup");
-    og.label = label;
-    for (const s of list) og.append(new Option(songLabel(s), s.id));
-    main.append(og);
-  };
-  group(chosen.length ? "Sung by all chosen members" : "All songs", withAll);
-  group("Everyone songs", everyone);
-  main.value = [...withAll, ...everyone].some((s) => s.id === keep) ? keep : "";
+const eventType = () => (radio("eventType") || "marathon") as EventType;
+/** Chosen members; a Spotlight event only uses the first slot. */
+function chosenMembers(): string[] {
+  const ids = eventType() === "spotlight" ? MEMBER_IDS.slice(0, 1) : MEMBER_IDS;
+  return [...new Set(ids.map((id) => $<HTMLSelectElement>(id).value).filter(Boolean))];
+}
 
-  const pool = highlightPool(db, chosen, main.value, $("includeEveryone").checked);
+function redetectEventSongs() {
+  eventIds.clear();
+  for (const id of suggestEventSongs(db, eventType(), chosenMembers())) eventIds.add(id);
+}
+
+const weights = (): WeightedSong[] =>
+  songWeights(db, chosenMembers(), eventIds, $("includeEveryone").checked, num("eventChance", 0.5));
+
+/** Redraw the song list: tick = event song, plus each song's pick chance. */
+function rebuildSongUi() {
+  const spotlight = eventType() === "spotlight";
+  for (const id of MEMBER_IDS.slice(1)) $(id).hidden = spotlight;
+  syncMemberOptions();
+
   const list = $("poolList");
+  const scroll = list.scrollTop;
+  const ws = weights();
   list.replaceChildren(
-    ...pool.map((s) => {
+    ...ws.map(({ song, weight, event }) => {
       const row = document.createElement("label");
-      row.className = "check";
+      row.className = "check" + (event ? " on" : "");
       const cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.value = s.id;
-      cb.checked = !poolOff.has(s.id);
-      row.classList.toggle("on", cb.checked);
+      cb.value = song.id;
+      cb.checked = event;
       const name = document.createElement("span");
-      name.textContent = s.title;
-      const len = document.createElement("span");
-      len.className = "len";
-      len.textContent = `${s.length}s`;
-      row.append(cb, name, len);
+      name.textContent = song.title;
+      const meta = document.createElement("span");
+      meta.className = "len";
+      meta.textContent = `${(weight * 100).toFixed(1)}% · ${song.length}s`;
+      row.append(cb, name, meta);
       return row;
     }),
   );
-  list.hidden = pool.length === 0;
-}
+  list.scrollTop = scroll;
+  list.hidden = ws.length === 0;
 
-/** Songs currently ticked in the pool list. */
-function poolSongs(): DbSong[] {
-  return [...$("poolList").querySelectorAll<HTMLInputElement>("input:checked")]
-    .map((cb) => songById.get(cb.value))
-    .filter((s): s is DbSong => Boolean(s));
+  const nEvent = ws.filter((w) => w.event).length;
+  const avg = ws.reduce((t, w) => t + w.weight * w.song.length, 0);
+  $("poolCount").textContent = chosenMembers().length
+    ? `${nEvent} event song${nEvent === 1 ? "" : "s"}, ${ws.length - nEvent} member songs · expected length ${avg.toFixed(0)}s`
+    : "Pick at least one member.";
 }
 
 // ------------------------------------------------------------ persistence
 
 function save() {
-  const state: Record<string, unknown> = { poolOff: [...poolOff] };
+  const state: Record<string, unknown> = { eventSongs: [...eventIds] };
   for (const el of form.elements as HTMLFormControlsCollection) {
     const i = el as HTMLInputElement;
     if (!i.id && i.type !== "radio") continue;
@@ -168,8 +178,7 @@ function load() {
   let state: Record<string, unknown> = {};
   try { state = JSON.parse(localStorage.getItem(STORE_KEY) ?? "{}"); } catch { /* ignore */ }
   for (const [k, v] of Object.entries(state)) {
-    if (k === "poolOff") { for (const id of v as string[]) poolOff.add(id); continue; }
-    if (k === "mainSong") continue; // options depend on members; restored below
+    if (k === "eventSongs") continue; // restored below, once members are set
     if (k.startsWith("radio:")) {
       const r = document.querySelector(`input[name="${k.slice(6)}"][value="${v}"]`) as HTMLInputElement | null;
       if (r) r.checked = true;
@@ -184,14 +193,25 @@ function load() {
     const d = new Date(Date.now() + 7 * 864e5);
     $("endDate").value = d.toISOString().slice(0, 10);
   }
-  rebuildSongUi(typeof state.mainSong === "string" ? state.mainSong : "");
+  if (Array.isArray(state.eventSongs)) {
+    for (const id of state.eventSongs as string[]) if (songById.has(id)) eventIds.add(id);
+  } else {
+    redetectEventSongs();
+  }
+  rebuildSongUi();
 }
 
 // ------------------------------------------------------------ compute + render
 
+const fromScores = () => radio("baseMode") !== "manual";
+
+function baseEp(): number {
+  return fromScores() ? baseEpFromScores(num("typicalPersonal"), num("typicalMulti")) : num("baseEp");
+}
+
 function pointOpts(): PointOpts {
   return {
-    baseEp: num("baseEp"),
+    baseEp: baseEp(),
     memberBonusPct: num("memberBonus"),
     holopass: $("holopass").checked,
     rounding: $<HTMLSelectElement>("rounding").value as Rounding,
@@ -202,19 +222,20 @@ function songSource(): SongSource {
   if (radio("songMode") === "manual") {
     return { kind: "manual", lengthPct: num("manualLengthPct"), avgLength: num("manualAvgLen", 127) };
   }
-  const main = songById.get($<HTMLSelectElement>("mainSong").value) ?? null;
-  return { kind: "pool", pool: buildPool(main, poolSongs(), num("eventChance", 0.5)) };
+  return {
+    kind: "pool",
+    // every song picked during an event gets the highlight bonus
+    pool: weights().map((w) => ({ length: w.song.length, highlight: true, weight: w.weight })),
+  };
 }
 
 function render() {
   const manual = radio("songMode") === "manual";
   $("poolBox").hidden = manual;
   $("manualBox").hidden = !manual;
-  const pool = poolSongs();
-  const avg = pool.length ? pool.reduce((t, x) => t + x.length, 0) / pool.length : 0;
-  $("poolCount").textContent = chosenMembers().length
-    ? `Highlight pool besides the main song: ${pool.length}${pool.length ? `, avg ${avg.toFixed(0)}s` : ""}`
-    : "Pick at least one member.";
+  $("scoresBox").hidden = !fromScores();
+  $("baseEpBox").hidden = fromScores();
+  $("scoresOut").textContent = `→ base EP ≈ ${baseEp().toFixed(1)} per play (multi-live fit, ±0.1%)`;
 
   const endDate = $("endDate").value;
   const [y, m, d] = endDate.split("-").map(Number);
@@ -224,7 +245,7 @@ function render() {
 
   const warnings: string[] = [];
   const src = songSource();
-  if (src.kind === "pool" && src.pool.length === 0) warnings.push("Pick the event members (and main song), or switch songs to manual.");
+  if (src.kind === "pool" && src.pool.length === 0) warnings.push("Pick the event members, or switch songs to manual.");
 
   const opts = pointOpts();
   const mins = minutesLeft(endDate);
@@ -249,7 +270,7 @@ function render() {
   const out = $("summary");
   const table = $<HTMLTableElement>("levels");
   if (!valid) {
-    if (opts.baseEp <= 0) warnings.push("Set a base EP per play (or calibrate it).");
+    if (opts.baseEp <= 0) warnings.push("Set your typical scores or a base EP per play.");
     $("warnings").innerHTML = warnings.map((w) => `<div class="warn">${w}</div>`).join("");
     $("results").hidden = true;
     return;
@@ -336,6 +357,7 @@ $("calibrate").addEventListener("click", () => {
     return;
   }
   $("baseEp").value = r.baseEp.toFixed(2);
+  (document.querySelector('input[name="baseMode"][value="manual"]') as HTMLInputElement).checked = true;
   $("calibOut").textContent =
     `${r.n} play${r.n === 1 ? "" : "s"}, avg ${fmt(r.meanPoints)} pts at ${k} boosts → base EP ≈ ${r.baseEp.toFixed(2)}` +
     (samples.some((x) => x.lengthPct === undefined) ? ` (assumed ${fallbackPct.toFixed(1)}% length bonus where not given)` : "");
@@ -344,11 +366,11 @@ $("calibrate").addEventListener("click", () => {
 });
 
 $("dbRefresh").addEventListener("click", () => void refreshDb(true));
-$("poolList").addEventListener("change", (e) => {
-  const cb = e.target as HTMLInputElement;
-  if (cb.checked) poolOff.delete(cb.value);
-  else poolOff.add(cb.value);
-  cb.parentElement!.classList.toggle("on", cb.checked);
+$("redetect").addEventListener("click", () => {
+  redetectEventSongs();
+  rebuildSongUi();
+  save();
+  render();
 });
 
 fillMembers();
@@ -356,8 +378,16 @@ load();
 dbStatus();
 render();
 const onEdit = (e: Event) => {
-  const id = (e.target as HTMLElement).id;
-  if (MEMBER_IDS.includes(id) || id === "mainSong" || id === "includeEveryone") rebuildSongUi();
+  const t = e.target as HTMLInputElement;
+  if (e.type === "change" && t.closest("#poolList")) {
+    if (t.checked) eventIds.add(t.value);
+    else eventIds.delete(t.value);
+    rebuildSongUi();
+  } else if (MEMBER_IDS.includes(t.id) || t.name === "eventType") {
+    if (e.type === "change") { redetectEventSongs(); rebuildSongUi(); }
+  } else if (t.id === "includeEveryone" || t.id === "eventChance") {
+    rebuildSongUi();
+  }
   save();
   render();
 };

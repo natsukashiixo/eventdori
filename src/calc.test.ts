@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BOOST_MULT,
-  buildPool,
+  baseEpFromScores,
   calibrateBaseEp,
   cheapestWithin,
   expectedPlay,
@@ -103,11 +103,8 @@ describe("calibration", () => {
 });
 
 describe("pool", () => {
-  const s = (length: number) => ({ length });
-
-  it("weights the main song at 50% and averages per song", () => {
-    const pool = buildPool(s(104), [s(104), s(166)]);
-    expect(pool.map((e) => e.weight)).toEqual([0.5, 0.25, 0.25]);
+  it("averages per song by pick weight", () => {
+    const pool = [104, 104, 166].map((length, i) => ({ length, highlight: true, weight: i === 0 ? 0.5 : 0.25 }));
     const { points, songSec, lengthPct } = expectedPlay(10, { kind: "pool", pool }, exact);
     // every event song is a highlight: 42% at 10 boosts (highlight base beats both lengths)
     const want = 100 * 1.42 * 56;
@@ -185,5 +182,28 @@ describe("planning", () => {
     expect(p.drinksSpent).toBe(400);
     expect(p.gemsSpent).toBe(5000);
     expect(p.gemsShort).toBe(2000);
+  });
+});
+
+describe("real multi-live plays (2026-11-02, bonus 171%, holopass)", () => {
+  // [boosts, highlight %, personal score, lobby multi score, event points shown]
+  const plays: [number, number, number, number, number][] = [
+    [1, 54, 2685029, 10658821, 31835], // Break It Down
+    [1, 54, 2450754, 13746530, 34225], // Shunkan Heartbeat
+    [1, 54, 2903683, 17990667, 40977], // KaienSpectacle
+    [0, 42, 2523429, 12504618, 3823], // You're Mine
+    [2, 50, 2542209, 13423460, 66768], // Break It Down
+    [10, 42, 2261405, 11474596, 199278], // BANZAI
+    [2, 50, 2465096, 12627073, 64368], // save our hearts
+    [2, 50, 2122457, 12453539, 61056], // Sweetest Scarlet
+    [2, 50, 2379387, 15085792, 68976], // Sweetest Scarlet
+    [0, 42, 2170158, 8821192, 3170], // Raden solo
+  ];
+
+  it("bonuses multiply: base × (1+bonus) × (1+highlight) × boost table × holopass matches within 0.05%", () => {
+    for (const [k, hl, personal, multi, ep] of plays) {
+      const o: PointOpts = { baseEp: baseEpFromScores(personal, multi), memberBonusPct: 171, holopass: true, rounding: "exact" };
+      expect(Math.abs(pointsPerPlay(k, hl, o) - ep) / ep).toBeLessThan(0.0005);
+    }
   });
 });

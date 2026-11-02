@@ -9,7 +9,7 @@
   <body>
     <header>
       <h1>eventdori</h1>
-      <p class="sub">event point calculator · everything runs and is saved in your browser</p>
+      <p class="sub">holodori event point calculator</p>
     </header>
 
     <main>
@@ -24,14 +24,25 @@
 
         <fieldset>
           <legend>Team</legend>
-          <label>Base EP per play<input type="number" id="baseEp" min="0" step="any" value="100" /></label>
+          <div class="radios">
+            <label><input type="radio" name="baseMode" value="scores" checked /> base EP from typical scores</label>
+            <label><input type="radio" name="baseMode" value="manual" /> enter base EP</label>
+          </div>
+          <div id="scoresBox">
+            <label>Your typical score<input type="number" id="typicalPersonal" min="0" step="10000" value="2400000" /></label>
+            <label>Typical multi score <small>(lobby total, top of the result screen)</small>
+              <input type="number" id="typicalMulti" min="0" step="10000" value="13000000" /></label>
+            <p class="hint" id="scoresOut"></p>
+          </div>
+          <label id="baseEpBox" hidden>Base EP per play<input type="number" id="baseEp" min="0" step="any" value="495" /></label>
           <label>Member event bonus %<input type="number" id="memberBonus" step="any" value="0" /></label>
           <label class="check"><input type="checkbox" id="holopass" /> holopass (×2 points, cap 20)</label>
           <details>
             <summary>Calibrate base EP from your plays</summary>
             <p class="hint">Play 4–5 songs at the same boost count and paste the points, one per line.
               Optionally add the length bonus % shown after a space (<code>6720 30</code>); otherwise the
-              expected bonus for your song pool is used. Uses the bonus % and holopass set above.</p>
+              expected bonus for your song pool is used. Uses the bonus % and holopass set above.
+              Switches to "enter base EP".</p>
             <label>Boosts used<input type="number" id="obsK" min="0" max="10" value="10" /></label>
             <label>Points per play<textarea id="obsPlays" rows="5" placeholder="6720&#10;7015 30&#10;6890"></textarea></label>
             <button type="button" id="calibrate">Set base EP</button>
@@ -68,7 +79,11 @@
             <label><input type="radio" name="songMode" value="manual" /> manual</label>
           </div>
           <div id="poolBox">
-            <label>Event members <small>(1–5)</small></label>
+            <div class="radios">
+              <label><input type="radio" name="eventType" value="marathon" checked /> Marathon</label>
+              <label><input type="radio" name="eventType" value="spotlight" /> Spotlight</label>
+            </div>
+            <label>Event members <small>(Marathon: 1–5, Spotlight: 1)</small></label>
             <div class="members">
               <select id="member1" class="member" aria-label="member 1"></select>
               <select id="member2" class="member" aria-label="member 2"></select>
@@ -76,8 +91,9 @@
               <select id="member4" class="member" aria-label="member 4"></select>
               <select id="member5" class="member" aria-label="member 5"></select>
             </div>
-            <label>Main song <small>(sung by all chosen members)</small><select id="mainSong"></select></label>
-            <label class="check"><input type="checkbox" id="includeEveryone" /> count "everyone" songs (hololive IDOL PROJECT) in the pool</label>
+            <label class="check"><input type="checkbox" id="includeEveryone" /> count "everyone" songs (hololive IDOL PROJECT) as each member's songs</label>
+            <p class="hint">Ticked = event song (50% of picks, split evenly). The rest come from a random member's other songs.
+              Event songs are guessed from release date. <button type="button" id="redetect" class="link">re-detect</button></p>
             <p class="hint" id="poolCount"></p>
             <div id="poolList" class="pool"></div>
           </div>
@@ -94,7 +110,7 @@
             <option value="exact">no rounding</option>
             <option value="floor-each">floor after each multiplier</option>
           </select></label>
-          <label>Main song chance<input type="number" id="eventChance" min="0" max="1" step="0.05" value="0.5" /></label>
+          <label>Event song share<input type="number" id="eventChance" min="0" max="1" step="0.05" value="0.5" /></label>
         </fieldset>
       </form>
 

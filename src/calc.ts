@@ -14,11 +14,6 @@ export const EVENT_END_HOUR_UTC = 11;
 
 export type Rounding = "floor-each" | "exact";
 
-/** Anything with a length in seconds (see DbSong in db.ts). */
-export interface SongLike {
-  length: number;
-}
-
 /** Guarded ceil: float noise like 34.000000000004 must not round up to 35. */
 const ceil = (x: number) => Math.max(0, Math.ceil(x - 1e-9));
 
@@ -61,6 +56,17 @@ export function pointsPerPlay(k: number, lengthPct: number, o: PointOpts): numbe
   v = r(v * BOOST_MULT[k]);
   v = v * (o.holopass ? 2 : 1);
   return v;
+}
+
+/**
+ * Base EP per play in multi-lives, from your own score and the lobby's multi score.
+ * Least-squares fit over 10 real plays (2026-11-02), max error 0.16 base points (~0.03%).
+ * Not an official formula; it may not carry over to solo lives.
+ */
+export const SCORE_FIT = { intercept: 120.659, perMillionPersonal: 66.366, perMillionMulti: 16.686 } as const;
+
+export function baseEpFromScores(personal: number, multi: number): number {
+  return SCORE_FIT.intercept + (SCORE_FIT.perMillionPersonal * personal) / 1e6 + (SCORE_FIT.perMillionMulti * multi) / 1e6;
 }
 
 /** Back-solve base EP from one observed play. Approximate if the game floors between steps. */
@@ -111,21 +117,6 @@ export interface PoolEntry {
   length: number;
   highlight: boolean;
   weight: number;
-}
-
-/**
- * Build the song pool: the main song appears with `mainChance`, the rest is spread evenly
- * over the members' other songs. Every event song gets the highlight bonus. Weights sum to 1.
- */
-export function buildPool(mainSong: SongLike | null, highlights: SongLike[], mainChance = 0.5): PoolEntry[] {
-  if (!mainSong && highlights.length === 0) return [];
-  if (!mainSong) return highlights.map((s) => ({ length: s.length, highlight: true, weight: 1 / highlights.length }));
-  if (highlights.length === 0) return [{ length: mainSong.length, highlight: true, weight: 1 }];
-  const hw = (1 - mainChance) / highlights.length;
-  return [
-    { length: mainSong.length, highlight: true, weight: mainChance },
-    ...highlights.map((s) => ({ length: s.length, highlight: true, weight: hw })),
-  ];
 }
 
 export type SongSource =
