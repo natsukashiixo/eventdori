@@ -1,0 +1,48 @@
+# Refresh the bundled fallback snapshot (src/data/db.json) from HolodoriDB once a day.
+# Commits only when songs/members actually changed (fetchedAt alone doesn't count),
+# then kicks off a deploy: pushes made with GITHUB_TOKEN don't trigger `on: push` workflows,
+# but workflow_dispatch does.
+name: Refresh data
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: cp src/data/db.json /tmp/db.old.json
+      - run: npm run data
+      - name: Compare (ignoring fetchedAt)
+        id: diff
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const strip = (p) => { const { fetchedAt, ...rest } = JSON.parse(fs.readFileSync(p, "utf8")); return JSON.stringify(rest); };
+            const changed = strip("/tmp/db.old.json") !== strip("src/data/db.json");
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `changed=${changed}\n`);
+            console.log(changed ? "data changed" : "no change");
+          '
+      - name: Commit and deploy
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          npm test
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "data: refresh snapshot"
+          git push
+          gh workflow run deploy.yml --ref main

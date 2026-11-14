@@ -1,5 +1,7 @@
 # eventdori
 
+Vibecoded cost calculator for holodori events.
+
 Browser-only event point calculator (see `writeup.md`). All math runs client-side; inputs persist in localStorage.
 
 ```sh
