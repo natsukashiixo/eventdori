@@ -1,0 +1,7 @@
+node_modules
+dist
+.git
+songsscores_temp
+hdbestfile_test
+*.png
+*.jpg

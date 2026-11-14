@@ -1,0 +1,9 @@
+services:
+  eventdori:
+    build:
+      context: .
+      # npm ci needs registry access; this host's docker bridge has no outbound DNS
+      network: host
+    ports:
+      - "1337:80"
+    restart: unless-stopped
